@@ -8,9 +8,9 @@ Put this file in the SAME FOLDER as the homework files it imports:
     NiN.py                 for nin_scratch
 You only need the files for the models you run.
 
-Also put these two things in this folder: dataset.csv (the FracAtlas metadata file) and
-FracAtlas.zip (the FracAtlas download). The script unzips it into FracAtlas_data/ on the first
-run and finds each image by the name in the CSV (any folder layout). It downloads nothing.
+No data files are needed: on the first run the script downloads FracAtlas from figshare (same
+source as runner.py) and unpacks it into FracAtlas_data/ (the zip itself is not kept). It reads
+dataset.csv from inside the data and finds each image by the name in the CSV (any folder layout).
 
 Everyone edits ONLY the two lines marked EDIT, runs the file, and sends back the CSVs in OUT_DIR.
 Start with SMOKE_TEST = True (tiny and fast), then set it to False for the real runs.
@@ -22,6 +22,9 @@ import random
 import shutil
 import time
 import zipfile
+import hashlib
+import tempfile
+import requests
 from importlib import import_module
 
 import numpy as np
@@ -45,14 +48,14 @@ ImageFile.LOAD_TRUNCATED_IMAGES = True
 
 # ----------------------------- settings -----------------------------
 SMOKE_TEST = True                       # True = tiny pipeline check; False = real runs
-RUNNER_TAG = "yourname"                 # EDIT: your name (used in output file names)
-MODELS_TO_RUN = ["vgg16_pretrained"]    # EDIT: resnet18_pretrained, vgg16_pretrained,
+RUNNER_TAG = "cecelia"                 # EDIT: your name (used in output file names)
+MODELS_TO_RUN = ["resnet18_scratch"]    # EDIT: resnet18_pretrained, vgg16_pretrained,
                                         #       mobilenetv2_pretrained, resnet18_scratch, nin_scratch
 
 # Everything below must stay identical across the team.
 DATA_ROOT, OUT_DIR = "FracAtlas_data", "project_outputs"
 LABELS_CSV = "dataset.csv"        # FracAtlas metadata: image_id, fractured, region, hardware, ...
-ZIP_FILE = "FracAtlas.zip"        # the FracAtlas download; unzipped into DATA_ROOT on the first run
+FIGSHARE_ARTICLE_ID, FIGSHARE_FILE_ID = 22363012, 65518038   # FracAtlas.zip; downloaded into DATA_ROOT on the first run
 IMAGE_SIZE, BATCH_SIZE, NUM_WORKERS = 224, 32, 2     # [Method] 224x224 inputs
 SPLIT_SEED = 42                                      # [Dataset] one fixed stratified 80/10/10 split
 SEEDS = [1, 2, 3]                                    # [Experiments] training seeds
@@ -112,28 +115,39 @@ def make_transforms(image_size, train_aug="none"):
     return train_tf, val_tf
 
 
-def unzip_dataset():
-    """If DATA_ROOT does not exist yet, unzip ZIP_FILE into it (nothing is downloaded). It unpacks
-    into a temporary folder first, so a failed unzip never leaves a half-empty DATA_ROOT. If you
-    already unzipped by hand into DATA_ROOT, this does nothing."""
+def download_dataset():
+    """If DATA_ROOT does not exist yet, download FracAtlas from figshare (same source as runner.py)
+    and unpack it into DATA_ROOT. The zip goes to a temporary file that is deleted afterwards, so
+    only the unpacked data is kept. It unpacks into DATA_ROOT_tmp first, so a failed run never
+    leaves a half-empty DATA_ROOT. If DATA_ROOT already exists, this does nothing."""
     if os.path.isdir(DATA_ROOT):
         return
-    if not os.path.exists(ZIP_FILE):
-        raise FileNotFoundError(f"Put {ZIP_FILE} (the FracAtlas download) in this folder, "
-                                f"or unzip it into '{DATA_ROOT}'.")
-    if not zipfile.is_zipfile(ZIP_FILE):
-        raise RuntimeError(f"{ZIP_FILE} is not a valid zip file (is the upload complete?).")
-    print(f"Unzipping {ZIP_FILE} into {DATA_ROOT} ...")
+    meta = requests.get(f"https://api.figshare.com/v2/articles/{FIGSHARE_ARTICLE_ID}", timeout=30).json()
+    target = next(f for f in meta["files"] if f["id"] == FIGSHARE_FILE_ID)
     tmp = DATA_ROOT + "_tmp"
     if os.path.exists(tmp):
-        shutil.rmtree(tmp)                              # leftover from an earlier failed unzip
-    with zipfile.ZipFile(ZIP_FILE) as z:
-        z.extractall(tmp)
+        shutil.rmtree(tmp)                              # leftover from an earlier failed run
+    with tempfile.TemporaryFile() as fh:                # deleted automatically when closed
+        print(f"Downloading {target['name']} ({target['size'] / 1e6:.0f} MB) from figshare ...")
+        md5 = hashlib.md5()
+        with requests.get(target["download_url"], stream=True, timeout=60) as r:
+            r.raise_for_status()
+            for chunk in r.iter_content(chunk_size=1 << 20):
+                fh.write(chunk)
+                md5.update(chunk)
+        if md5.hexdigest() != target["computed_md5"]:
+            raise RuntimeError("FracAtlas download failed its checksum; run again to retry.")
+        print(f"Unzipping into {DATA_ROOT} ...")
+        fh.seek(0)
+        with zipfile.ZipFile(fh) as z:
+            z.extractall(tmp)
     for dirpath, _, files in os.walk(tmp):
         for f in files:
             if f.lower().endswith(".zip"):              # unpack zips nested inside the download
-                with zipfile.ZipFile(os.path.join(dirpath, f)) as z:
+                nested = os.path.join(dirpath, f)
+                with zipfile.ZipFile(nested) as z:
                     z.extractall(dirpath)
+                os.remove(nested)
     os.rename(tmp, DATA_ROOT)
 
 
@@ -197,7 +211,7 @@ def set_up(seed, data_dir):
     print(f"Accelerator {device} will be used.")
     torch.backends.cudnn.benchmark = False
     torch.backends.cudnn.deterministic = True
-    unzip_dataset()                                      # first run only
+    download_dataset()                                      # first run only
     base_ds = FracDataset(find_labels_csv(data_dir), data_dir)
     pos = 1                                              # fractured = 1
     split = stratified_split(base_ds.targets, seed)
@@ -326,7 +340,7 @@ def build_model(model_name, num_classes=2, freeze=True):
         return tl.get_pretrained_model(PRETRAINED[model_name], num_classes=num_classes,
                                        feature_extract=freeze)
     if model_name == "resnet18_scratch":
-        return load_homework_module("ResNet").ResNet(num_classes=num_classes)
+        return load_homework_module("ResNet18Scratch").ResNet18Scratch([2,2,2,2], num_classes=num_classes)
     if model_name == "nin_scratch":
         model = load_homework_module("NiN").NiN(num_classes=num_classes)
         out_block = model.sequential[6]                  # output NiNBlock; its last layer is a ReLU
