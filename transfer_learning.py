@@ -27,6 +27,27 @@ def get_pretrained_model(
             num_classes
         )
 
+    ### mobilenetv2 - pre trained model
+    elif model_name == "mobilenet_v2":
+
+        # Load pretrained MobileNetV2
+        model = models.mobilenet_v2(
+            weights=models.MobileNet_V2_Weights.DEFAULT
+        )
+
+        # Freeze pretrained weights
+        if feature_extract:
+            for parameter in model.parameters():
+                parameter.requires_grad = False
+
+        # Replace final layer for binary classification.
+        # MobileNetV2's classifier is Sequential(Dropout(0.2), Linear(1280, 1000));
+        # keep the dropout and swap only the Linear layer at index 1.
+        model.classifier[1] = nn.Linear(
+            model.classifier[1].in_features,
+            num_classes
+        )
+
     else:
         raise ValueError(
             f"Model {model_name} is unsupported."
