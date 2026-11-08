@@ -41,8 +41,6 @@ def get_pretrained_model(
                 parameter.requires_grad = False
 
         # Replace final layer for binary classification.
-        # MobileNetV2's classifier is Sequential(Dropout(0.2), Linear(1280, 1000));
-        # keep the dropout and swap only the Linear layer at index 1.
         model.classifier[1] = nn.Linear(
             model.classifier[1].in_features,
             num_classes
