@@ -2,7 +2,7 @@ from typing import cast
 from torchvision import models
 import torch.nn as nn
 
-
+### resnet18 - pre trained model
 def get_pretrained_model(
     model_name="resnet18",
     num_classes=2,
