@@ -57,7 +57,7 @@ DATA_ROOT, OUT_DIR = "FracAtlas_data", "project_outputs"
 LABELS_CSV = "dataset.csv"        # FracAtlas metadata: image_id, fractured, region, hardware, ...
 FIGSHARE_ARTICLE_ID, FIGSHARE_FILE_ID = 22363012, 65518038   # FracAtlas.zip; downloaded into DATA_ROOT on the first run
 IMAGE_SIZE, BATCH_SIZE, NUM_WORKERS = 224, 32, 2     # [Method] 224x224 inputs
-SPLIT_SEED = 42                                      # [Dataset] one fixed stratified 80/10/10 split
+SPLIT_SEED = 42                                      # [Dataset] one fixed stratified 64/16/20 split
 SEEDS = [1, 2, 3]                                    # [Experiments] training seeds
 AUG_SETTINGS = ["none", "flip_rotate"]               # [Method] no augmentation vs. flip + rotation
 ROTATION_DEG = 10                                    # [Method] rotation up to +/-10 degrees
@@ -196,11 +196,13 @@ class FracDataset:
 
 
 def stratified_split(targets, seed):
-    """[Dataset] stratified 80/10/10 keeps the ~17.6% fractured share in every subset.
+    """[Dataset] stratified 64/16/20 (Milestone I feedback): 20% test first, then 20% of the
+    remainder for validation. Keeps the ~17.6% fractured share in every subset.
     (HW: random 80/20, no test set.)"""
     idx, y = np.arange(len(targets)), np.array(targets)
-    train_idx, rest = train_test_split(idx, test_size=0.2, stratify=y, random_state=seed)
-    val_idx, test_idx = train_test_split(rest, test_size=0.5, stratify=y[rest], random_state=seed)
+    trainval_idx, test_idx = train_test_split(idx, test_size=0.2, stratify=y, random_state=seed)
+    train_idx, val_idx = train_test_split(trainval_idx, test_size=0.2, stratify=y[trainval_idx],
+                                          random_state=seed)
     return train_idx, val_idx, test_idx
 
 
